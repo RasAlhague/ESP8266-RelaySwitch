@@ -2,9 +2,34 @@
 #include <espconn.h>
 #include <mem.h>
 #include <gpio.h>
+#include <stdlib.h>
 #include "osapi.h"
 
 #define DLEVEL 2
+
+char GPIO_URI[] = "/gpio/";
+char GPIO_HIGH[] = "/high";
+char GPIO_LOW[] = "/low";
+
+typedef struct uri {
+    char uri[128];
+} URI;
+
+char OK_200[32] = "HTTP/1.1 200 OK";
+
+void process_gprio_uri(URI *);
+
+int ipow(int base, int exp) {
+    int result = 1;
+    while (exp) {
+        if (exp & 1)
+            result *= base;
+        exp >>= 1;
+        base *= base;
+    }
+
+    return result;
+}
 
 void init_gpios(void) {
     os_printf("Initing GPIO to LOW\n");
@@ -44,9 +69,7 @@ void http_disconnetcb(void *arg) {
     espconn_disconnect(pespconn);
 }
 
-void extract_uri(char *__dest, char *__response) {
-    char uri[64];
-
+void extract_uri(URI *__dest, char *__response) {
     char *http_str_poiner;
     http_str_poiner = strstr(__response, " HTTP");
 #if DLEVEL > 2
@@ -60,13 +83,11 @@ void extract_uri(char *__dest, char *__response) {
 #endif
 
     size_t p_url_end = (size_t) (http_str_poiner - slash_str_poiner);
-    strncpy(uri, slash_str_poiner, p_url_end);
-    uri[p_url_end] = '\0';
-#if DLEVEL > 1
-    os_printf("uri = %s\n", uri);
+    strncpy(__dest->uri, slash_str_poiner, p_url_end);
+    __dest->uri[p_url_end] = '\0';
+#if DLEVEL > 2
+    os_printf("uri = %s\n", __dest->uri);
 #endif
-
-    strcpy(__dest, uri);
 }
 
 void http_recvcb(void *arg,
@@ -74,32 +95,39 @@ void http_recvcb(void *arg,
                  unsigned short len) {
     struct espconn *pespconn = arg;
     char response[len];
-    char uri[64];
+    URI uri;
 
     os_memcpy(response, pdata, len);
 
-    extract_uri(uri, response);
-#if DLEVEL > 2
-    os_printf("uri = %s\n", uri);
-    os_printf("%d\n", strcmp(uri, "/gpio0/low") == 0);
-#endif
+    extract_uri(&uri, response);
 
-    if (strcmp(uri, "/gpio0/low") == 0) {
-        os_printf("/gpio0/low\n");
-        gpio_output_set(0, BIT0, BIT0, 0);
-    } else if (strcmp(uri, "/gpio0/high") == 0) {
-        os_printf("/gpio0/high\n");
-        gpio_output_set(BIT0, 0, BIT0, 0);
-    } else if (strcmp(uri, "/gpio1/low") == 0) {
-        os_printf("/gpio1/low\n");
-        gpio_output_set(0, BIT2, BIT2, 0);
-    } else if (strcmp(uri, "/gpio1/high") == 0) {
-        os_printf("/gpio1/high\n");
-        gpio_output_set(BIT2, 0, BIT2, 0);
+    if (strncmp(uri.uri, GPIO_URI, strlen(GPIO_URI)) == 0) {
+        process_gprio_uri(&uri);
     }
 
     espconn_regist_sentcb(pespconn, http_disconnetcb);
-    espconn_send(pespconn, uri, strlen(uri));
+//    espconn_send(pespconn, uri, strlen(uri));
+    espconn_send(pespconn, OK_200, strlen(OK_200));
+}
+
+void process_gprio_uri(URI *uri) {
+    long int gpio_pin;
+    uint32 pin_addr;
+    gpio_pin = strtol(uri->uri + strlen(GPIO_URI), NULL, 10);
+    pin_addr = (uint32) ((ipow(2, gpio_pin % 4)) * ipow(10, gpio_pin / 4));
+
+#if DLEVEL > 2
+    os_printf("gpio_pin = %d\n", gpio_pin);
+    os_printf("pin_addr = %d\n", pin_addr);
+#endif
+
+    if (strstr(uri->uri, GPIO_LOW)) {
+        os_printf("Setting pin to LOW with address = %d; URL = %s\n", pin_addr, uri->uri);
+        gpio_output_set(0, pin_addr, pin_addr, 0);
+    } else if (strstr(uri->uri, GPIO_HIGH)) {
+        os_printf("Setting pin to HIGH with address = %d; URL = %s\n", pin_addr, uri->uri);
+        gpio_output_set(pin_addr, 0, pin_addr, 0);
+    }
 }
 
 //This function gets called whenever
